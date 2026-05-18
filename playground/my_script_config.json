@@ -1,0 +1,24 @@
+{
+  "models": [
+    "Qwen/Qwen2.5-0.5B-Instruct",
+    "Qwen/Qwen3-4B-Instruct-2507",
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+    "meta-llama/Llama-3.2-1B-Instruct",
+    "h2oai/h2o-danube3-500m-chat"
+  ],
+  "context": "KV cache compression reduces the memory footprint of long-context generation. Different methods keep only the most useful keys and values so inference can stay faster and cheaper on long prompts.",
+  "questions": [
+    "In one short paragraph, explain why KV cache compression is useful.",
+    "What is the difference between prefill and decoding phase?",
+    "What is a vLLM?"
+  ],
+  "compression_ratios": [
+    0.0,
+    0.25,
+    0.5,
+    0.75
+  ],
+  "apply_keydiff_during_prefill": true,
+  "apply_keydiff_during_generation": true,
+  "max_new_tokens": 120
+}
