@@ -20,6 +20,7 @@ from kvpress.presses.decoding_press import DecodingPress
 from kvpress.presses.dms_press import DMSPress
 from kvpress.presses.duo_attention_press import DuoAttentionPress
 from kvpress.presses.expected_attention_press import ExpectedAttentionPress
+from kvpress.presses.filtering_press import FilteringPress
 from kvpress.presses.expected_attention_with_stats import ExpectedAttentionStatsPress
 from kvpress.presses.fastkvzip_press import FastKVzipPress
 from kvpress.presses.finch_press import FinchPress
@@ -91,6 +92,7 @@ __all__ = [
     "KVzapPress",
     "DMSPress",
     "FastKVzipPress",
+    "FilteringPress",
     "KVComposePress",
     "MergingPress",
     "CapPress",
