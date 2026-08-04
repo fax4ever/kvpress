@@ -47,6 +47,7 @@ class FilteringPress(DecodingPress):
 
     target_compression_ratio: float = 0.5
     compression_interval: int = 1
+    fill_padding: bool = True
     target_size: int = field(default=1, init=False)
 
     def __post_init__(self):
@@ -89,8 +90,9 @@ class FilteringPress(DecodingPress):
 
         kt.accept_last(~rejected)
         vt.accept_last(~rejected)
-        kt.fill_padding()
-        vt.fill_padding()
+        if self.fill_padding:
+            kt.fill_padding()
+            vt.fill_padding()
         kt.shrink()
         vt.shrink()
 
