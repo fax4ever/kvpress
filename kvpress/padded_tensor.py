@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import torch
 
-FILL_VALUE = float("-inf")
+FILL_VALUE = 0.0
 
 
 class PaddedTensor:
