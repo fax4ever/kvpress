@@ -11,14 +11,7 @@ import pytest
 import torch
 from transformers import DynamicCache, pipeline
 
-from kvpress import (
-    KeyDiffPress,
-    KnormPress,
-    PrefillDecodingPress,
-    StreamingLLMPress,
-    TOVAPress,
-    UniformFilteringPress,
-)
+from kvpress import KeyDiffPress, KnormPress, PrefillDecodingPress, StreamingLLMPress, TOVAPress, UniformFilteringPress
 from kvpress.presses.scorer_press import ScorerPress
 
 
@@ -58,9 +51,9 @@ def test_uniform_filtering_press_reduces_cache(pipe):
         model.generate(input_ids, past_key_values=cache_filtered, max_new_tokens=20, do_sample=False)
     filtered_len = cache_filtered.get_seq_length()
 
-    assert filtered_len < baseline_len, (
-        f"filtered cache ({filtered_len}) should be smaller than baseline ({baseline_len})"
-    )
+    assert (
+        filtered_len < baseline_len
+    ), f"filtered cache ({filtered_len}) should be smaller than baseline ({baseline_len})"
 
 
 def test_uniform_filtering_press_no_op_at_zero_ratio(pipe):
@@ -120,9 +113,7 @@ def test_uniform_filtering_press_higher_ratio_filters_more(pipe):
 
     low_len = cache_low.get_seq_length()
     high_len = cache_high.get_seq_length()
-    assert high_len <= low_len, (
-        f"higher ratio cache ({high_len}) should be <= lower ratio cache ({low_len})"
-    )
+    assert high_len <= low_len, f"higher ratio cache ({high_len}) should be <= lower ratio cache ({low_len})"
 
 
 def test_uniform_filtering_press_reuse_across_sequences(pipe):

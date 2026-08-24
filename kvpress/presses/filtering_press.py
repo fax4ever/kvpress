@@ -70,9 +70,14 @@ class FilteringPress(DecodingPress):
         attentions: torch.Tensor,
         kwargs: dict,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        total_tokens_seen = int(kwargs["position_ids"].max().item()) + 1
-        n_kept = max(1, int(total_tokens_seen * (1 - self.target_compression_ratio)))
-        n_kept = min(n_kept, keys.shape[2])
+        position_ids = kwargs["position_ids"]
+        if position_ids.dim() == 1:
+            position_ids = position_ids.unsqueeze(0)
+        if position_ids.shape[0] == 1:
+            position_ids = position_ids.expand(keys.shape[0], -1)
+        total_tokens_seen = position_ids.max(dim=-1).values + 1
+        n_kept = (total_tokens_seen.float() * (1 - self.target_compression_ratio)).round().long()
+        n_kept = n_kept.clamp(min=1, max=keys.shape[2])
 
         layer_idx = getattr(module, "layer_idx", 0)
         if layer_idx in self._lengths:
@@ -80,16 +85,24 @@ class FilteringPress(DecodingPress):
         else:
             lengths = torch.full(keys.shape[:2], keys.shape[2] - 1, dtype=torch.long, device=keys.device)
 
+        bsz, n_heads = keys.shape[0], keys.shape[1]
         kt = PaddedTensor(keys.clone(), lengths.clone())
         vt = PaddedTensor(values.clone(), lengths.clone())
         valid_mask = kt.valid_mask(include_last=True)
 
-        scores = self.base_press.score(
-            module, hidden_states, kt.data, vt.data, attentions, {**kwargs, "valid_mask": valid_mask}
-        )
-        scores[~valid_mask] = float("-inf")
+        scores = torch.full(keys.shape[:3], float("-inf"), device=keys.device, dtype=keys.dtype)
+        for b in range(bsz):
+            for h in range(n_heads):
+                valid_pos = valid_mask[b, h].nonzero(as_tuple=True)[0]
+                head_keys = kt.data[b : b + 1, h : h + 1, valid_pos, :]
+                head_values = vt.data[b : b + 1, h : h + 1, valid_pos, :]
+                head_hidden = hidden_states[b : b + 1] if hidden_states is not None else None
+                head_scores = self.base_press.score(module, head_hidden, head_keys, head_values, attentions, kwargs)
+                scores[b, h, valid_pos] = head_scores[0, 0]
 
-        threshold = scores.topk(n_kept, dim=-1, sorted=True).values[:, :, -1]
+        sorted_scores, _ = scores.sort(dim=-1, descending=True)
+        idx = (n_kept - 1).view(-1, 1, 1).expand(-1, scores.shape[1], 1)
+        threshold = sorted_scores.gather(-1, idx).squeeze(-1)
         rejected = scores[:, :, -1] < threshold
 
         if rejected.all():

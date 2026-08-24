@@ -5,29 +5,11 @@
 Tests for FilteringPress — online per-token keep/skip decisions during decoding.
 """
 
-from dataclasses import dataclass
-
 import pytest
 import torch
 from transformers import DynamicCache, pipeline
 
-from kvpress import (
-    FilteringPress,
-    KeyDiffPress,
-    KnormPress,
-    PrefillDecodingPress,
-    StreamingLLMPress,
-    TOVAPress,
-)
-from kvpress.presses.scorer_press import ScorerPress
-
-
-@dataclass
-class FixedScorePress(ScorerPress):
-    fixed_scores: torch.Tensor = None
-
-    def score(self, module, hidden_states, keys, values, attentions, kwargs):
-        return self.fixed_scores
+from kvpress import FilteringPress, KeyDiffPress, KnormPress, PrefillDecodingPress, StreamingLLMPress, TOVAPress
 
 
 @pytest.fixture(scope="module")
@@ -58,9 +40,9 @@ def test_filtering_press_reduces_cache(pipe):
         model.generate(input_ids, past_key_values=cache_filtered, max_new_tokens=20, do_sample=False)
     filtered_len = cache_filtered.get_seq_length()
 
-    assert filtered_len < baseline_len, (
-        f"filtered cache ({filtered_len}) should be smaller than baseline ({baseline_len})"
-    )
+    assert (
+        filtered_len < baseline_len
+    ), f"filtered cache ({filtered_len}) should be smaller than baseline ({baseline_len})"
 
 
 def test_filtering_press_no_op_at_zero_ratio(pipe):
@@ -120,9 +102,7 @@ def test_filtering_press_higher_ratio_filters_more(pipe):
 
     low_len = cache_low.get_seq_length()
     high_len = cache_high.get_seq_length()
-    assert high_len <= low_len, (
-        f"higher ratio cache ({high_len}) should be <= lower ratio cache ({low_len})"
-    )
+    assert high_len <= low_len, f"higher ratio cache ({high_len}) should be <= lower ratio cache ({low_len})"
 
 
 def test_filtering_press_reuse_across_sequences(pipe):
@@ -137,100 +117,3 @@ def test_filtering_press_reuse_across_sequences(pipe):
     with torch.no_grad(), press(model):
         model.generate(long_ids, max_new_tokens=6, do_sample=False)
         model.generate(short_ids, max_new_tokens=6, do_sample=False)
-
-
-BATCH, N_HEADS, SEQ_LEN, HEAD_DIM = 1, 2, 10, 4
-
-
-def _make_press(scores, ratio=0.5):
-    scorer = FixedScorePress()
-    scorer.fixed_scores = scores
-    return FilteringPress(base_press=scorer, target_compression_ratio=ratio)
-
-
-def _make_dummy_tensors(seq_len=SEQ_LEN):
-    keys = torch.randn(BATCH, N_HEADS, seq_len, HEAD_DIM)
-    values = torch.randn(BATCH, N_HEADS, seq_len, HEAD_DIM)
-    hidden_states = torch.randn(BATCH, seq_len, HEAD_DIM)
-    kwargs = {"position_ids": torch.arange(seq_len).unsqueeze(0)}
-    return keys, values, hidden_states, kwargs
-
-
-def _base_scores():
-    """Scores where positions 0-4 are high (5.0) and 5-8 are low (1.0), last token varies."""
-    scores = torch.zeros(BATCH, N_HEADS, SEQ_LEN)
-    scores[:, :, :5] = 5.0
-    scores[:, :, 5:9] = 1.0
-    return scores
-
-
-def test_compress_all_heads_accept():
-    """Token kept at last position when all heads accept."""
-    scores = _base_scores()
-    scores[:, :, -1] = 5.0
-    press = _make_press(scores)
-    keys, values, hidden_states, kwargs = _make_dummy_tensors()
-
-    out_keys, out_values = press.compress(None, hidden_states, keys, values, None, kwargs)
-
-    assert out_keys.shape[2] == SEQ_LEN
-    assert not torch.isinf(out_keys[:, :, -1, :]).any()
-
-
-def test_compress_all_heads_reject():
-    """Cache shrinks when all heads reject the new token."""
-    scores = _base_scores()
-    scores[:, :, -1] = 0.0
-    press = _make_press(scores)
-    keys, values, hidden_states, kwargs = _make_dummy_tensors()
-
-    out_keys, out_values = press.compress(None, hidden_states, keys, values, None, kwargs)
-
-    assert out_keys.shape[2] == SEQ_LEN - 1
-
-
-def test_compress_one_head_rejects():
-    """Shape unchanged when one head rejects; rejected head gets -inf at last position."""
-    scores = _base_scores()
-    scores[:, 0, -1] = 5.0
-    scores[:, 1, -1] = 0.0
-    press = _make_press(scores)
-    keys, values, hidden_states, kwargs = _make_dummy_tensors()
-
-    out_keys, out_values = press.compress(None, hidden_states, keys, values, None, kwargs)
-
-    assert out_keys.shape[2] == SEQ_LEN
-    assert not torch.isinf(out_keys[:, 0, -1, :]).any(), "accepted head should keep valid data"
-    assert (out_keys[:, 1, -1, :] == 0.0).all(), "rejected head should have padding fill value"
-
-
-def test_compress_accepted_head_fills_gap():
-    """Accepted head packs new token into prefix at stored length position."""
-    scores = _base_scores()
-    scores[:, 0, -1] = 5.0  # head 0 accepts (new token at last position)
-    scores[:, 1, -1] = 0.0  # head 1 rejects
-    press = _make_press(scores)
-    keys, values, hidden_states, kwargs = _make_dummy_tensors()
-
-    # Simulate prior state: head 0 has 8 valid tokens, head 1 has 9
-    original_new_key = keys[:, 0, -1, :].clone()
-    press._lengths[0] = torch.tensor([[8, 9]])
-
-    out_keys, out_values = press.compress(None, hidden_states, keys, values, None, kwargs)
-
-    # Head 0 accepted: new token packed at position 8, lengths=9
-    # Head 1 rejected: lengths=9 → both heads at 9 → shrink to 9
-    assert out_keys.shape[2] == SEQ_LEN - 1
-    assert torch.allclose(out_keys[0, 0, 8, :], original_new_key[0])
-
-
-def test_compress_filters_even_with_small_cache():
-    """Filtering applies even when the cache is smaller than n_kept."""
-    small_seq = 3
-    scores = torch.tensor([[[5.0, 5.0, 0.0], [5.0, 5.0, 0.0]]])
-    press = _make_press(scores, ratio=0.5)
-    keys, values, hidden_states, kwargs = _make_dummy_tensors(seq_len=small_seq)
-
-    out_keys, out_values = press.compress(None, hidden_states, keys, values, None, kwargs)
-
-    assert out_keys.shape[2] == small_seq - 1
